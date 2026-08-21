@@ -374,19 +374,21 @@ class SyncEngine:
     # -- run -----------------------------------------------------------------
 
     def run(self) -> dict[str, Any]:
-        """Pull pending events, then push local changes."""
+        """Pull pending events, push local changes, then pull once more.
+
+        The trailing pull advances the seq cursor past events created by our
+        own push, so the next run never re-fetches them and misfires a
+        conflict against files we just wrote locally.
+        """
         pull_result = self.pull()
         push_result = self.push()
-        if push_result["conflicts"]:
-            # Fetch the server copies for conflicted paths right away, keeping
-            # the conflicts already found in the first pull.
-            follow_up = self.pull()
-            pull_result = {
-                "applied": pull_result["applied"] + follow_up["applied"],
-                "conflicts": sorted(
-                    set(pull_result["conflicts"]) | set(follow_up["conflicts"])
-                ),
-                "next_seq": follow_up["next_seq"],
-                "pages": pull_result["pages"] + follow_up["pages"],
-            }
+        follow_up = self.pull()
+        pull_result = {
+            "applied": pull_result["applied"] + follow_up["applied"],
+            "conflicts": sorted(
+                set(pull_result["conflicts"]) | set(follow_up["conflicts"])
+            ),
+            "next_seq": follow_up["next_seq"],
+            "pages": pull_result["pages"] + follow_up["pages"],
+        }
         return {"pull": pull_result, "push": push_result}
