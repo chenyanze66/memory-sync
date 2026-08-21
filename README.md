@@ -1,5 +1,7 @@
 # memory-sync - multi-device memory sync for AI agents
 
+**English** | [中文文档](README.zh-CN.md)
+
 **Keep your AI agent's memory in sync across every device - automatically, safely, and self-hosted.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -156,27 +158,11 @@ cd client && python -m pytest tests/        # client tests (fake transport, offl
 
 **memory-sync** - 给 AI Agent 用的多端记忆同步工具：把 `CURRENT.md`、`TERMS.md`、日记等 Markdown 记忆文件在电脑、手机之间自动保持一致，自己部署、数据自己掌控。
 
+> 完整中文文档（功能 / 原理 / 快速开始 / 安全模型 / 路线图）：**[README.zh-CN.md](README.zh-CN.md)**
+
 - **5 分钟跑通**：服务器一条 `docker compose up`，客户端 `pip install ./client` 后 `memory-sync sync ./notes`
 - **绝不静默覆盖**：冲突时服务端副本落 `conflicts/<时间戳>/`，本地文件永远保留
 - **只传增量**：客户端维护哈希快照，只有变化的文件才上传
 - **安全默认**：HTTPS + Argon2id 密码 + Ed25519 设备签名 + PostgreSQL RLS 账号隔离
-- **资源占用小**：PostgreSQL + FastAPI + Caddy 三容器合计约 1 GiB，2G 小服务器就能跑
-
-### 快速开始
-
-```bash
-git clone https://github.com/chenyanze66/memory-sync.git
-cd memory-sync
-cp .env.example .env   # 填入你的域名和随机密钥（邀请码留空=开放注册）
-docker compose up -d
-```
-
-```bash
-pip install ./client
-memory-sync register --server https://你的域名 --email 你@example.com --display-name 我
-memory-sync sync ./notes
-```
-
-另一台设备 `memory-sync login` 后 `memory-sync sync ./notes` 即可，之后两边自动一致。
 
 如果你觉得有用，点个 star 支持一下。
