@@ -17,13 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare deploy package (server code + Caddyfile + compose)
+      - name: Prepare deploy package (server code only)
         run: |
           mkdir -p pkg
           cp -r server pkg/
-          cp Caddyfile pkg/
-          cp docker-compose.yml pkg/
-          cp .env.example pkg/
           find pkg -name __pycache__ -type d -exec rm -rf {} +
           tar -czf memory-sync-deploy.tar.gz -C pkg .
 
@@ -48,16 +45,16 @@ jobs:
           cp -a memory-sync-2g memory-sync-2g.bak-$ts
           rm -rf deploy-tmp && mkdir deploy-tmp
           tar -xzf /tmp/memory-sync-deploy.tar.gz -C deploy-tmp
-          echo '[deploy] overlay server code (preserves .env / compose.override.yaml / site)'
+          echo '[deploy] overlay server code (keeps .env / compose.yaml / compose.override.yaml / site)'
           cp -a deploy-tmp/server/* memory-sync-2g/
-          cp deploy-tmp/Caddyfile memory-sync-2g/Caddyfile
-          cp deploy-tmp/docker-compose.yml memory-sync-2g/docker-compose.yml
+          # remove the stray repo-named compose file if a previous deploy left one
+          rm -f memory-sync-2g/docker-compose.yml
           echo '[deploy] update website client zip + checksums'
           cp /tmp/memory-sync-windows.zip memory-sync-2g/site/downloads/memory-sync-windows.zip
           cp /tmp/checksums.txt memory-sync-2g/site/downloads/checksums.txt
-          echo '[deploy] rebuild + restart api'
+          echo '[deploy] rebuild + restart api (ACR base image + Aliyun pip mirror)'
           cd memory-sync-2g
-          docker compose build api
+          docker compose build --build-arg BASE_IMAGE=crpi-2du6470p5g4pmvlo.cn-hangzhou.personal.cr.aliyuncs.com/chuanpiao/memory-sync:python --build-arg PIP_INDEX_URL=http://mirrors.cloud.aliyuncs.com/pypi/simple/ --build-arg PIP_TRUSTED_HOST=mirrors.cloud.aliyuncs.com api
           docker compose up -d api
           sleep 12
           curl -fsS https://sync.chuanpiao.ltd/readyz
@@ -66,7 +63,7 @@ jobs:
           EOF
           chmod +x deploy-on-server.sh
 
-      - name: Deploy via SSH
+      - name: Deploy via SSH (scp package)
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.ECS_HOST }}
@@ -76,7 +73,7 @@ jobs:
           source: 'memory-sync-deploy.tar.gz,memory-sync-windows.zip,checksums.txt,deploy-on-server.sh'
           target: /tmp/
 
-      - name: Run deploy script
+      - name: Run deploy script on server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.ECS_HOST }}

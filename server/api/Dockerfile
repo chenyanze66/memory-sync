@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -8,7 +9,11 @@ WORKDIR /app
 
 RUN addgroup --system app && adduser --system --ingroup app app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# PIP_INDEX_URL / PIP_TRUSTED_HOST are overridable at build time
+# (the ECS deployment uses the Aliyun mirror + a private ACR base image).
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_TRUSTED_HOST=pypi.org
+RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} --trusted-host ${PIP_TRUSTED_HOST} -r requirements.txt
 COPY app ./app
 
 USER app
