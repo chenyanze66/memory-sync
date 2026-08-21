@@ -1,7 +1,8 @@
 """argparse CLI: register / login / status / sync.
 
-Passwords come from ``--password``, the ``MEMORY_SYNC_PASSWORD`` env var, or
-an interactive ``getpass`` prompt — never echoed and never printed. Tests
+Passwords come from the ``MEMORY_SYNC_PASSWORD`` env var (preferred), the
+``--password`` flag (INSECURE: visible in the process list), or an
+interactive ``getpass`` prompt - never echoed and never printed. Tests
 inject a fake transport through ``main(..., transport=...)``.
 """
 
@@ -26,11 +27,18 @@ SECRET_ENV = "MEMORY_SYNC_PASSWORD"
 
 
 def _password(args: argparse.Namespace) -> str:
-    if args.password:
-        return args.password
+    # Preferred: env var (not visible in the process list).
     env = os.environ.get(SECRET_ENV)
     if env:
         return env
+    # Fallback: explicit flag, but it is visible to ps aux / Task Manager.
+    if args.password:
+        print(
+            "warning: --password is visible in the process list; "
+            f"prefer the ${SECRET_ENV} env var or the interactive prompt",
+            file=sys.stderr,
+        )
+        return args.password
     return getpass.getpass("Password: ")
 
 
@@ -180,11 +188,10 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="memory-sync",
         description="Windows-friendly CLI client for the FastAPI memory sync API.",
     )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help=f"config file path (default: {default_config_path()})",
-    )
+    # NOTE: --config lives on each subcommand (add_common), not here.
+    # A global+subparser duplicate is an argparse foot-gun: the subparser
+    # default overwrites the global value when the flag is passed before the
+    # subcommand (e.g. "memory-sync --config X sync" silently ignores X).
     parser.add_argument(
         "--server",
         default=None,
@@ -198,7 +205,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-name", default=None, help="device name to register")
 
     def add_common(subparser: argparse.ArgumentParser) -> None:
-        subparser.add_argument("--config", default=None, help="config file path")
+        subparser.add_argument(
+            "--config",
+            default=None,
+            help=f"config file path (default: {default_config_path()})",
+        )
         subparser.add_argument("--server", default=None, help="API base URL")
         subparser.add_argument("--sync-root", default=None, help="folder containing Markdown files to sync")
         subparser.add_argument("--device-name", default=None, help="device name to register")
@@ -208,7 +219,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_register = sub.add_parser("register", help="create an account and register this device")
     add_common(p_register)
     p_register.add_argument("--email", required=True)
-    p_register.add_argument("--password", default=None, help=f"password (default: ${SECRET_ENV} env or prompt)")
+    p_register.add_argument(
+    "--password",
+    default=None,
+    help="password (INSECURE: visible in process list; prefer the "
+    f"${SECRET_ENV} env var or the interactive prompt)",
+)
     p_register.add_argument("--display-name", required=True)
     p_register.add_argument(
         "--invite-code",
@@ -220,7 +236,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p_login = sub.add_parser("login", help="log in and (re)register this device")
     add_common(p_login)
     p_login.add_argument("--email", required=True)
-    p_login.add_argument("--password", default=None, help=f"password (default: ${SECRET_ENV} env or prompt)")
+    p_login.add_argument(
+    "--password",
+    default=None,
+    help="password (INSECURE: visible in process list; prefer the "
+    f"${SECRET_ENV} env var or the interactive prompt)",
+)
     p_login.set_defaults(handler=_cmd_login)
 
     p_status = sub.add_parser("status", help="show local config summary")

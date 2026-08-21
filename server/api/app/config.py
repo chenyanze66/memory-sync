@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     refresh_token_days: int = Field(default=30, ge=1, le=90)
     device_clock_skew_seconds: int = Field(default=300, ge=30, le=900)
     max_content_bytes: int = Field(default=1_048_576, ge=1024, le=5_242_880)
+    # Per-user storage quota (open registration abuse protection).
+    storage_max_files: int = Field(default=1000, ge=10, le=1_000_000)
+    storage_max_bytes: int = Field(default=104_857_600, ge=1_048_576, le=10_737_418_240)
     max_request_bytes: int = Field(default=1_258_291, ge=2048, le=6_291_456)
     auth_rate_limit_attempts: int = Field(default=10, ge=1, le=100)
     auth_rate_limit_window_seconds: int = Field(default=300, ge=10, le=3600)

@@ -15,6 +15,13 @@ async def register_device(payload: DeviceRegisterRequest, user_id: UUID = Depend
     device_id = uuid4()
     try:
         async with transaction(user_id) as conn:
+            # Cap devices per account (open-registration abuse protection).
+            result = await conn.execute(
+                "SELECT COUNT(*) FROM devices WHERE user_id=%s AND revoked_at IS NULL",
+                (user_id,),
+            )
+            if (await result.fetchone())[0] >= 20:
+                raise HTTPException(status_code=403, detail="device limit reached (20)")
             await conn.execute(
                 """
                 INSERT INTO devices(id,user_id,name,platform,public_key)

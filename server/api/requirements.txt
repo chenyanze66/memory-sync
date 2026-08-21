@@ -1,8 +1,10 @@
-fastapi==0.116.1
-uvicorn[standard]==0.35.0
-psycopg[binary,pool]==3.2.9
-PyJWT==2.10.1
+# Pinned after pip-audit review 2026-08-22 (P0.1: 29 CVEs cleared)
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+psycopg[binary,pool]==3.3.4
+PyJWT==2.13.0
 argon2-cffi==25.1.0
-cryptography==45.0.6
+cryptography==50.0.0
+starlette==1.6.0
 pydantic-settings==2.10.1
 email-validator==2.2.0

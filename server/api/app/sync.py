@@ -33,6 +33,33 @@ def verify_content(content: str, content_hash: str, deleted: bool) -> bytes:
     return raw
 
 
+async def check_storage_quota(conn, user_id) -> None:
+    """Raise 413 when the user is over the per-user storage quota.
+
+    Runs inside the caller's transaction AFTER the new version is inserted;
+    the raise aborts the transaction so the insert rolls back. Counts active
+    (non-deleted) documents and the byte size of their head versions.
+    """
+    settings = get_settings()
+    result = await conn.execute(
+        """
+        SELECT COUNT(*) FILTER (WHERE d.status <> 'deleted'),
+               COALESCE(SUM(LENGTH(v.content)), 0)
+        FROM documents d
+        LEFT JOIN document_versions v ON v.id = d.head_version_id
+        WHERE d.user_id = %s
+        """,
+        (user_id,),
+    )
+    files, total_bytes = await result.fetchone()
+    if files > settings.storage_max_files or total_bytes > settings.storage_max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail="user storage quota exceeded (files=%d/%d, bytes=%d/%d)"
+            % (files, settings.storage_max_files, total_bytes, settings.storage_max_bytes),
+        )
+
+
 async def operation_result(conn, device_id, operation_id):
     result = await conn.execute(
         "SELECT result_payload FROM operations WHERE device_id=%s AND operation_id=%s",
@@ -151,6 +178,8 @@ async def push(payload: PushRequest, identity: DeviceIdentity = Depends(active_d
             await conn.execute(
                 "UPDATE documents SET status='conflicted' WHERE id=%s", (document_id,)
             )
+
+        await check_storage_quota(conn, identity.user_id)
 
         event_result = await conn.execute(
             """
@@ -336,6 +365,7 @@ async def resolve(payload: ResolveRequest, identity: DeviceIdentity = Depends(ac
             "UPDATE documents SET head_version_id=%s,status=%s WHERE id=%s",
             (version_id, "deleted" if payload.deleted else "normal", payload.document_id),
         )
+        await check_storage_quota(conn, identity.user_id)
         event_result = await conn.execute(
             "INSERT INTO sync_events(user_id,space_id,document_id,version_id,event_type) VALUES (%s,%s,%s,%s,'resolved') RETURNING seq",
             (identity.user_id, doc[1], payload.document_id, version_id),

@@ -9,7 +9,7 @@ description = "Windows-friendly CLI client for the FastAPI memory sync API (stdl
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["cryptography>=41"]
+dependencies = ["cryptography>=46.0.7"]
 
 [project.scripts]
 memory-sync = "memory_sync_client.cli:main"
