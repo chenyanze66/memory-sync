@@ -38,3 +38,176 @@ Your memory lives in Markdown files: `CURRENT.md`, `TERMS.md`, daily notes, long
 - **Tiny footprint** - runs comfortably on a 2 vCPU / 2 GiB VPS (~1 GiB for all containers)
 - **zstd + gzip compression** on every response via Caddy
 - **Optional invite-code gate** - leave `REGISTRATION_INVITE_CODE` empty for open registration, set it to lock down your server
+
+## How it works
+
+```
++------------+   HTTPS (Caddy, TLS 1.3)   +------------------+
+|  Device A  | --------------------------> |   memory-sync   |
+|  (CLI +    |  pull events (seq cursor)   |     server       |
+|  .md files)| <-------------------------- |  FastAPI + PG16  |
++------------+                             |   + RLS + Caddy  |
++------------+                             +------------------+
+|  Device B  | -- same protocol ---------> (single source of truth)
+|  (CLI +    |
+|  .md files)|
++------------+
+```
+
+Each sync run (client side):
+
+1. **Pull** - fetch events after the last known `seq`, apply them to disk (conflicting server copies go to `conflicts/`)
+2. **Push** - hash every local Markdown file, upload only files whose hash changed, tagged with the `base_version_id` they were edited from
+3. **Converge** - the server rejects a push whose base is stale (409) and the client pulls again, so every device ends at the same state
+
+The server stores immutable file versions plus an append-only event log, so the full history can always be replayed or inspected.
+
+## Quickstart (5 minutes)
+
+### 1. Run the server (any Linux VPS or Docker machine)
+
+```bash
+git clone https://github.com/chenyanze66/memory-sync.git
+cd memory-sync
+cp .env.example .env
+# edit .env: set SYNC_DOMAIN, ACME_EMAIL, and replace all replace-with-* values
+docker compose up -d
+curl -fsS https://your-domain.com/readyz   # -> {"status": "ready"}
+```
+
+That's it - PostgreSQL, the API, and Caddy (with automatic HTTPS) are up.
+
+### 2. Install the Skill (recommended - no software to download)
+
+memory-sync ships as an **agent Skill**: drop one folder into your agent's skills
+directory, then just talk to it in natural language. The CLI is only a thin
+runtime underneath - the Skill installs it on first use.
+
+```bash
+# DSH: copy the skill into your user skills directory
+mkdir -p ~/.dsh/skills
+cp -r skill/memory-sync ~/.dsh/skills/memory-sync
+# then restart the session (or start a new one)
+```
+
+Now just tell your agent:
+
+- **"start using memory-sync"** - guided registration (email, display name, password via env/prompt)
+- **"sync my memory"** - it runs `memory-sync sync ./notes` and reports the result in plain language
+
+Other agents (Claude, ...): copy the [SKILL.md](skill/memory-sync/SKILL.md) into their
+skill/plugin definition - same CLI underneath. See [skill/memory-sync](skill/memory-sync).
+
+### 3. Or use the CLI directly (power users)
+
+```bash
+pip install ./client          # or: pipx install ./client
+memory-sync register --server https://your-domain.com --email you@example.com --display-name me
+memory-sync sync ./notes      # run any time, or set up a cron/scheduled task
+```
+
+On the second device:
+
+```bash
+memory-sync login --server https://your-domain.com --email you@example.com
+memory-sync sync ./notes
+```
+
+Your `notes/` folders now stay identical on both machines. Add a scheduled task (Windows Task Scheduler / `crontab`) and it's fully automatic.
+
+### Using the Skill - step by step
+
+1. **Install**: copy `skill/memory-sync` into your agent's skills folder
+   (DSH: `~/.dsh/skills/memory-sync`), then open a new session.
+2. **Verify**: the agent's skill list now shows `memory-sync` (in DSH it
+   appears in the session's available skills).
+3. **First run** - just say to your agent:
+
+   > **You:** 开始用 memory-sync  
+   > **Agent:** guides you through registration (email, display name; password via
+   > `MEMORY_SYNC_PASSWORD` env var or a hidden prompt), then runs the first sync.
+
+4. **Daily use**:
+
+   > **You:** 同步一下我的记忆  
+   > **Agent:** runs `memory-sync sync ./notes` and reports, e.g.
+   > "拉取应用 2 个、冲突 0 个；推送 1 个、未变化 3 个"（pull 2 applied / push 1 pushed）
+
+5. **Second device**: install the skill there, say **"登录 memory-sync"**, then
+   **"同步我的记忆"** - both machines now converge on the same files.
+6. **Anything else**: "看看同步状态" → `memory-sync status`; "记忆同步出问题了"
+   → the agent checks the error and explains (conflicts go to `conflicts/`,
+   413 = quota, 429 = rate limit).
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `memory-sync register` | Create an account (invite code optional) and register this device |
+| `memory-sync login` | Log in on another device and bind a new device key |
+| `memory-sync status` | Show account, device, last sync time |
+| `memory-sync sync <dir>` | Pull pending events, then push local changes |
+
+## Project layout
+
+```
+memory-sync/
+|-- server/          # FastAPI sync service (PostgreSQL + RLS + Ed25519 signing)
+|   |-- api/         #   the application
+|   `-- db/          #   schema + app-role bootstrap (runs on first boot)
+|-- client/          # Python CLI (stdlib + cryptography only)
+|   `-- memory_sync_client/
+|-- docs/            # diagrams and screenshots
+|-- docker-compose.yml
+|-- Caddyfile
+`-- .env.example
+```
+
+## Security model
+
+- **Transport**: HTTPS only (Caddy auto-renews Let's Encrypt certs), zstd/gzip encoded responses
+- **Passwords**: Argon2id hashed; missing accounts burn the same verify time (no user enumeration)
+- **Tokens**: short-lived access JWT (HS256) + rotating refresh tokens stored in the user's private config
+- **Device identity**: Ed25519 keypair per device; requests signed with canonical `METHOD\nPATH\nTS\nNONCE\nSHA256(body)` and a nonce replay window
+- **Tenant isolation**: PostgreSQL `FORCE RLS` with a `NOBYPASSRLS` app role; the user id is injected per transaction
+- **Per-user quota**: storage is capped per account (files + total bytes across all versions) and the number of devices - protects an open-registration server from abuse
+- **Rate limiting**: auth endpoints are limited per client IP. The limiter is **in-process** - run a **single API worker** (`docker compose up -d` default); with multiple workers the limit would be per worker
+- **No secrets in the repo**: everything is configured through `.env`
+
+## Roadmap
+
+- [x] v0.1 - sync core (pull/push, conflicts, tombstones, device signing, RLS)
+- [ ] Remote control channel - send a task from your phone to your PC's agent
+- [ ] Version history + rollback commands
+- [ ] Semantic search over memories (pgvector)
+- [ ] Web UI / shared spaces
+
+## Development
+
+```bash
+cd server && python -m pytest tests/        # server pure tests
+cd client && python -m pytest tests/        # client tests (fake transport, offline)
+```
+
+## License
+
+[MIT](LICENSE) (c) 2026 Chen Yanze
+
+---
+
+<p align="center"><b>If memory-sync saves you from one manual copy-paste, give it a star.</b></p>
+
+---
+
+## 中文说明
+
+**memory-sync** - 给 AI Agent 用的多端记忆同步工具：把 `CURRENT.md`、`TERMS.md`、日记等 Markdown 记忆文件在电脑、手机之间自动保持一致，自己部署、数据自己掌控。
+
+> 完整中文文档（功能 / 原理 / 快速开始 / 安全模型 / 路线图）：**[README.zh-CN.md](README.zh-CN.md)**
+
+- **5 分钟跑通**：服务器一条 `docker compose up`，客户端 `pip install ./client` 后 `memory-sync sync ./notes`
+- **绝不静默覆盖**：冲突时服务端副本落 `conflicts/<时间戳>/`，本地文件永远保留
+- **只传增量**：客户端维护哈希快照，只有变化的文件才上传
+- **安全默认**：HTTPS + Argon2id 密码 + Ed25519 设备签名 + PostgreSQL RLS 账号隔离
+
+如果你觉得有用，点个 star 支持一下。

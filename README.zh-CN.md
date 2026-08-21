@@ -38,3 +38,151 @@
 - **占用极小**——2 vCPU / 2 GiB 的 VPS 就能流畅运行（三个容器合计约 1 GiB）
 - **zstd + gzip 压缩**——Caddy 对每个响应自动压缩
 - **可选邀请码门槛**——`REGISTRATION_INVITE_CODE` 留空 = 开放注册；设置值则锁定服务器
+
+## 工作原理
+
+```
++------------+   HTTPS (Caddy, TLS 1.3)   +------------------+
+|  设备 A    | --------------------------> |   memory-sync   |
+|  (CLI +    |  拉取事件 (seq 游标)         |     server       |
+|  .md 文件) | <-------------------------- |  FastAPI + PG16  |
++------------+                             |   + RLS + Caddy  |
++------------+                             +------------------+
+|  设备 B    | -- 同一协议 --------------> (唯一事实来源)
+|  (CLI +    |
+|  .md 文件) |
++------------+
+```
+
+客户端每次同步分三步：
+
+1. **拉取（Pull）**——获取 `seq` 游标之后的新事件，写入磁盘（冲突的服务端副本进 `conflicts/`）
+2. **推送（Push）**——哈希扫描本地所有 Markdown 文件，只上传哈希变化的部分，并携带编辑所基于的 `base_version_id`
+3. **收敛（Converge）**——服务端拒绝基于过期版本（stale base）的推送（409），客户端重新拉取，所有设备最终收敛到同一状态
+
+服务端保存不可变的文件版本 + append-only 事件日志，完整历史随时可以回放或审计。
+
+## 快速开始（5 分钟）
+
+### 1. 启动服务器（任意 Linux VPS 或 Docker 机器）
+
+```bash
+git clone https://github.com/chenyanze66/memory-sync.git
+cd memory-sync
+cp .env.example .env
+# 编辑 .env：设置 SYNC_DOMAIN、ACME_EMAIL，并替换所有 replace-with-* 的值
+docker compose up -d
+curl -fsS https://你的域名/readyz   # -> {"status": "ready"}
+```
+
+搞定——PostgreSQL、API、Caddy（自动 HTTPS）全部就绪。
+
+### 2. 安装 Skill（推荐——不用下载软件）
+
+memory-sync 以 **Agent Skill** 形式分发：把一个文件夹放进 Agent 的 skills 目录，之后直接用自然语言对话即可。CLI 只是底层薄运行时，Skill 会在首次使用时自动安装。
+
+```bash
+# DSH：把 skill 拷到用户 skills 目录
+mkdir -p ~/.dsh/skills
+cp -r skill/memory-sync ~/.dsh/skills/memory-sync
+# 然后重启会话（或新开一个会话）
+```
+
+之后直接对 Agent 说：
+
+- **"开始用 memory-sync"** —— 引导式注册（邮箱、显示名，密码走环境变量/交互提示）
+- **"同步一下我的记忆"** —— 它执行 `memory-sync sync ./notes` 并用中文汇报结果
+
+其他 Agent（Claude 等）：把 [SKILL.md](skill/memory-sync/SKILL.md) 复制进对应平台的 skill/plugin 定义即可，底层命令不变。详见 [skill/memory-sync](skill/memory-sync)。
+
+### 3. 或者直接用 CLI（进阶用户）
+
+```bash
+pip install ./client          # 或：pipx install ./client
+memory-sync register --server https://你的域名 --email you@example.com --display-name me
+memory-sync sync ./notes      # 随时手动跑，或配置 cron / 计划任务
+```
+
+第二台设备上：
+
+```bash
+memory-sync login --server https://你的域名 --email you@example.com
+memory-sync sync ./notes
+```
+
+两台机器的 `notes/` 文件夹从此保持一致。配置一个计划任务（Windows 任务计划程序 / `crontab`）后就是全自动。
+
+### 使用 Skill（一步步走查）
+
+1. **安装**：把 `skill/memory-sync` 复制进 Agent 的 skills 目录（DSH：`~/.dsh/skills/memory-sync`），然后新开一个会话。
+2. **验证**：Agent 的技能列表里能看到 `memory-sync`（DSH 中会出现在本会话的可用技能里）。
+3. **首次使用**——直接对 Agent 说：
+
+   > **你：** 开始用 memory-sync  
+   > **Agent：** 引导你完成注册（邮箱、显示名；密码走 `MEMORY_SYNC_PASSWORD` 环境变量或隐藏式输入），然后执行首次同步。
+
+4. **日常使用**：
+
+   > **你：** 同步一下我的记忆  
+   > **Agent：** 执行 `memory-sync sync ./notes` 并汇报，例如"拉取应用 2 个、冲突 0 个；推送 1 个、未变化 3 个"。
+
+5. **第二台设备**：在那台设备装上 skill，说 **"登录 memory-sync"**，再说 **"同步我的记忆"**——两台机器从此收敛到同一份文件。
+6. **其他**："看看同步状态" → `memory-sync status`；"记忆同步出问题了" → Agent 查错误并解释（冲突落 `conflicts/`、413=配额超限、429=触发限流）。
+
+### 命令一览
+
+| 命令 | 作用 |
+|---|---|
+| `memory-sync register` | 创建账号（邀请码可选）并注册本设备 |
+| `memory-sync login` | 在另一台设备登录并绑定新设备密钥 |
+| `memory-sync status` | 查看账号、设备、上次同步时间 |
+| `memory-sync sync <dir>` | 先拉取待处理事件，再推送本地变更 |
+
+## 项目结构
+
+```
+memory-sync/
+|-- server/          # FastAPI 同步服务（PostgreSQL + RLS + Ed25519 签名）
+|   |-- api/         #   应用代码
+|   `-- db/          #   表结构 + 应用角色初始化（首次启动时执行）
+|-- client/          # Python CLI（仅依赖标准库 + cryptography）
+|   `-- memory_sync_client/
+|-- docs/            # 图示与截图
+|-- docker-compose.yml
+|-- Caddyfile
+`-- .env.example
+```
+
+## 安全模型
+
+- **传输**：仅 HTTPS（Caddy 自动续期 Let's Encrypt 证书），响应 zstd/gzip 压缩
+- **密码**：Argon2id 哈希；不存在的账号也消耗相同的校验时间（防账号枚举）
+- **令牌**：短期 access JWT（HS256）+ 轮换 refresh token（复用已吊销令牌会触发该账号全部令牌连坐吊销），令牌存在用户私有配置中
+- **设备身份**：每台设备一个 Ed25519 密钥对；请求签名内容为规范化的 `METHOD\nPATH\nTS\nNONCE\nSHA256(body)`，带 nonce 防重放窗口
+- **租户隔离**：PostgreSQL `FORCE RLS` + `NOBYPASSRLS` 应用角色，用户 ID 在每个事务内注入
+- **每用户配额**：存储按账号限额（文件数 + 全部版本总字节数）、设备数也限额——保护开放注册的服务器不被滥用
+- **限流**：认证接口按客户端 IP 限流。注意限流器是**进程内**实现——必须运行**单 API worker**（`docker compose up -d` 默认就是单副本）；多 worker 时限额会按 worker 各自计数
+- **仓库无密钥**：所有配置通过 `.env`，依赖已用 pip-audit 扫过（0 已知漏洞）
+
+## 路线图
+
+- [x] v0.1 —— 同步核心（拉/推、冲突、墓碑、设备签名、RLS）
+- [ ] 远程控制通道——手机向电脑上的 Agent 下发任务
+- [ ] 版本历史 + 回滚命令
+- [ ] 记忆语义检索（pgvector）
+- [ ] Web UI / 共享空间
+
+## 开发
+
+```bash
+cd server && python -m pytest tests/        # 服务端纯测试
+cd client && python -m pytest tests/        # 客户端测试（离线假传输）
+```
+
+## 开源协议
+
+[MIT](LICENSE) (c) 2026 Chen Yanze
+
+---
+
+<p align="center"><b>如果 memory-sync 帮你省了一次手动拷贝，就给个 star 吧。</b></p>
