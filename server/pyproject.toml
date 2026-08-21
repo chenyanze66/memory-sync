@@ -1,0 +1,12 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "BLE", "SIM", "RUF"]
+ignore = [
+    "B008",   # FastAPI intentionally uses Depends/Header/Query in defaults.
+    "BLE001", # Readiness must fold any driver/network error into false.
+    "E501",   # SQL statements are clearer as intact strings.
+    "SIM117", # Nested async context managers keep transaction scope explicit.
+]

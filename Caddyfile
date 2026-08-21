@@ -1,0 +1,40 @@
+{
+    email {$ACME_EMAIL}
+    servers {
+        protocols h1 h2
+    }
+}
+
+{$SYNC_DOMAIN} {
+    encode zstd gzip
+
+    @api path /v1/* /healthz /readyz
+    handle @api {
+        # Exact byte count; must equal the API's MAX_REQUEST_BYTES (default 1258291).
+        request_body {
+            max_size 1258291
+        }
+        reverse_proxy api:8000 {
+            # Overwrite (never append): X-Forwarded-For carries only the direct
+            # remote peer, so the API can trust it as the real client IP.
+            header_up X-Forwarded-For {remote_host}
+        }
+    }
+
+    handle {
+        respond "not found" 404
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

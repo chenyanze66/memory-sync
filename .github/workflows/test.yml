@@ -1,0 +1,34 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ./client pytest
+      - run: python -m pytest tests/
+        working-directory: client
+
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r api/requirements.txt pytest httpx
+        working-directory: server
+      - run: python -m pytest tests/
+        working-directory: server
+        env:
+          DATABASE_URL: postgresql://unused:unused@127.0.0.1:5432/unused
+          JWT_SECRET: test-secret-test-secret-test-secret-test-secret-1234567890
+          REGISTRATION_INVITE_CODE: test-invite-code-1234567890abcdef

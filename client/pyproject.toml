@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-sync-client"
+version = "0.1.0"
+description = "Windows-friendly CLI client for the FastAPI memory sync API (stdlib + cryptography)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["cryptography>=41"]
+
+[project.scripts]
+memory-sync = "memory_sync_client.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["memory_sync_client*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
