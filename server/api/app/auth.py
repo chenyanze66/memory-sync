@@ -117,11 +117,11 @@ async def refresh(payload: RefreshRequest, _: None = Depends(auth_rate_limit)):
                 "UPDATE refresh_tokens SET revoked_at=now() WHERE id=%s", (row[0],)
             )
             return await issue_tokens(conn, row[1])
-    if revoked_user is not None:
-        async with transaction() as conn:
-            await conn.execute(
-                "UPDATE refresh_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
-                (revoked_user,),
-            )
-        raise HTTPException(status_code=401, detail="invalid refresh token")
+    # row[2] is not None (revoked token reused): revoke the whole family in
+    # its own transaction (commits despite the 401 below), then reject.
+    async with transaction() as conn:
+        await conn.execute(
+            "UPDATE refresh_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+            (revoked_user,),
+        )
     raise HTTPException(status_code=401, detail="invalid refresh token")
