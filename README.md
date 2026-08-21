@@ -8,6 +8,8 @@
 
 > **Try the live demo:** [https://sync.chuanpiao.ltd](https://sync.chuanpiao.ltd) - register an account and sync a folder from two devices in under 5 minutes.
 
+![memory-sync demo - two devices, one memory](docs/demo.gif)
+
 ![memory-sync hero](docs/hero.webp)
 
 Your memory lives in Markdown files: `CURRENT.md`, `TERMS.md`, daily notes, long-term knowledge. With memory-sync you stop manually copying them between your work PC, home PC, and phone - the files stay identical everywhere, and nothing is ever silently overwritten.
