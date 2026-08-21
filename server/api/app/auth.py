@@ -92,6 +92,7 @@ async def refresh(payload: RefreshRequest, _: None = Depends(auth_rate_limit)):
     if not (32 <= len(token) <= 512) or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in token):
         raise HTTPException(status_code=401, detail="invalid refresh token")
     token_hash = hash_refresh_token(token)
+    revoked_user = None
     async with transaction() as conn:
         result = await conn.execute(
             """
@@ -108,11 +109,19 @@ async def refresh(payload: RefreshRequest, _: None = Depends(auth_rate_limit)):
             raise HTTPException(status_code=401, detail="invalid refresh token")
         if row[2] is not None:
             # A revoked token was used again: assume the refresh-token family
-            # leaked and revoke every remaining active token for this user.
+            # leaked. Remember the user; do the revocation in its own
+            # transaction below so it commits even though we return 401.
+            revoked_user = row[1]
+        else:
+            await conn.execute(
+                "UPDATE refresh_tokens SET revoked_at=now() WHERE id=%s", (row[0],)
+            )
+            return await issue_tokens(conn, row[1])
+    if revoked_user is not None:
+        async with transaction() as conn:
             await conn.execute(
                 "UPDATE refresh_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
-                (row[1],),
+                (revoked_user,),
             )
-            raise HTTPException(status_code=401, detail="invalid refresh token")
-        await conn.execute("UPDATE refresh_tokens SET revoked_at=now() WHERE id=%s", (row[0],))
-        return await issue_tokens(conn, row[1])
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+    raise HTTPException(status_code=401, detail="invalid refresh token")
