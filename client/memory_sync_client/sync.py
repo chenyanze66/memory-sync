@@ -128,9 +128,18 @@ def decode_event_content(event: dict[str, Any]) -> bytes:
 
 
 def _safe_rel_path(path: str) -> Path:
-    """Reject absolute paths and traversal outside the sync root."""
+    """Reject absolute paths and traversal outside the sync root.
+
+    Also rejects drive-relative ("c:foo") and NTFS alternate-data-stream
+    ("file.md:stream") paths, which Path.is_absolute() does not catch on
+    Windows.
+    """
     candidate = Path(path)
-    if candidate.is_absolute() or ".." in candidate.parts:
+    if (
+        candidate.is_absolute()
+        or ".." in candidate.parts
+        or any(":" in part for part in candidate.parts)
+    ):
         raise ValueError(f"unsafe sync path: {path!r}")
     return candidate
 

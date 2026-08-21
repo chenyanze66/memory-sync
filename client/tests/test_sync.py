@@ -229,6 +229,16 @@ def test_pull_rejects_unsafe_paths(tmp_path):
         engine.pull()
 
 
+@pytest.mark.parametrize("path", ["c:foo", "file.md:stream", "notes/x.md:stream", "a:b/c"])
+def test_pull_rejects_drive_relative_and_ads_paths(tmp_path, path):
+    # Windows drive-relative and NTFS alternate-data-stream paths must not
+    # escape the sync root (Path.is_absolute() misses "c:foo").
+    engine = make_engine(tmp_path)
+    engine.api.pull_responses = [{"events": [event(path, b"x")], "next_seq": 1}]
+    with pytest.raises(ValueError):
+        engine.pull()
+
+
 # -- push --------------------------------------------------------------------
 
 

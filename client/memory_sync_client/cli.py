@@ -192,17 +192,8 @@ def _build_parser() -> argparse.ArgumentParser:
     # A global+subparser duplicate is an argparse foot-gun: the subparser
     # default overwrites the global value when the flag is passed before the
     # subcommand (e.g. "memory-sync --config X sync" silently ignores X).
-    parser.add_argument(
-        "--server",
-        default=None,
-        help="API base URL, e.g. https://api.example.com",
-    )
-    parser.add_argument(
-        "--sync-root",
-        default=None,
-        help="folder containing Markdown files to sync",
-    )
-    parser.add_argument("--device-name", default=None, help="device name to register")
+    # --server / --sync-root / --device-name live on each subcommand only,
+    # for the same argparse reason as --config (see note above).
 
     def add_common(subparser: argparse.ArgumentParser) -> None:
         subparser.add_argument(

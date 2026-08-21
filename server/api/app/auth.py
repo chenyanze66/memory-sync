@@ -95,9 +95,9 @@ async def refresh(payload: RefreshRequest, _: None = Depends(auth_rate_limit)):
     async with transaction() as conn:
         result = await conn.execute(
             """
-            SELECT t.id,t.user_id FROM refresh_tokens t
+            SELECT t.id,t.user_id,t.revoked_at FROM refresh_tokens t
             JOIN auth_accounts a ON a.id=t.user_id
-            WHERE t.token_hash=%s AND t.revoked_at IS NULL AND t.expires_at>now()
+            WHERE t.token_hash=%s AND t.expires_at>now()
               AND a.disabled_at IS NULL
             FOR UPDATE OF t
             """,
@@ -105,6 +105,14 @@ async def refresh(payload: RefreshRequest, _: None = Depends(auth_rate_limit)):
         )
         row = await result.fetchone()
         if row is None:
+            raise HTTPException(status_code=401, detail="invalid refresh token")
+        if row[2] is not None:
+            # A revoked token was used again: assume the refresh-token family
+            # leaked and revoke every remaining active token for this user.
+            await conn.execute(
+                "UPDATE refresh_tokens SET revoked_at=now() WHERE user_id=%s AND revoked_at IS NULL",
+                (row[1],),
+            )
             raise HTTPException(status_code=401, detail="invalid refresh token")
         await conn.execute("UPDATE refresh_tokens SET revoked_at=now() WHERE id=%s", (row[0],))
         return await issue_tokens(conn, row[1])

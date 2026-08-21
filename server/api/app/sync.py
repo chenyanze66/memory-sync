@@ -18,6 +18,10 @@ def normalize_path(value: str) -> str:
     parts = value.split("/")
     if any(part in ("", ".", "..") for part in parts):
         raise HTTPException(status_code=422, detail="path contains an invalid segment")
+    # Colon segments (drive-relative "c:foo" / NTFS ADS "file.md:stream") are
+    # not valid sync paths; reject them as deep defense.
+    if any(":" in part for part in parts):
+        raise HTTPException(status_code=422, detail="path contains an invalid segment")
     normalized = "/".join(parts)
     return normalized
 
@@ -37,8 +41,9 @@ async def check_storage_quota(conn, user_id) -> None:
     """Raise 413 when the user is over the per-user storage quota.
 
     Runs inside the caller's transaction AFTER the new version is inserted;
-    the raise aborts the transaction so the insert rolls back. Counts active
-    (non-deleted) documents and the byte size of their head versions.
+    the raise aborts the transaction so the insert rolls back. The byte count
+    includes ALL stored versions (head + history), so repeatedly editing the
+    same file cannot bypass the quota via unbounded version growth.
     """
     settings = get_settings()
     result = await conn.execute(
@@ -46,7 +51,7 @@ async def check_storage_quota(conn, user_id) -> None:
         SELECT COUNT(*) FILTER (WHERE d.status <> 'deleted'),
                COALESCE(SUM(LENGTH(v.content)), 0)
         FROM documents d
-        LEFT JOIN document_versions v ON v.id = d.head_version_id
+        JOIN document_versions v ON v.document_id = d.id
         WHERE d.user_id = %s
         """,
         (user_id,),

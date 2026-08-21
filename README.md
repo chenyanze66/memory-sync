@@ -123,6 +123,8 @@ memory-sync/
 - **Tokens**: short-lived access JWT (HS256) + rotating refresh tokens stored in the user's private config
 - **Device identity**: Ed25519 keypair per device; requests signed with canonical `METHOD\nPATH\nTS\nNONCE\nSHA256(body)` and a nonce replay window
 - **Tenant isolation**: PostgreSQL `FORCE RLS` with a `NOBYPASSRLS` app role; the user id is injected per transaction
+- **Per-user quota**: storage is capped per account (files + total bytes across all versions) and the number of devices - protects an open-registration server from abuse
+- **Rate limiting**: auth endpoints are limited per client IP. The limiter is **in-process** - run a **single API worker** (`docker compose up -d` default); with multiple workers the limit would be per worker
 - **No secrets in the repo**: everything is configured through `.env`
 
 ## Roadmap

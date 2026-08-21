@@ -31,6 +31,13 @@ def test_invalid_paths(path):
         normalize_path(path)
 
 
+@pytest.mark.parametrize("path", ["c:foo", "file.md:stream", "notes/file.md:stream", "a:b/c"])
+def test_colon_paths_rejected(path):
+    # Drive-relative and NTFS ADS paths must never be accepted.
+    with pytest.raises(HTTPException):
+        normalize_path(path)
+
+
 def test_content_hash_and_lf_normalization(monkeypatch):
     raw = b"a\nb\n"
     value = verify_content("a\r\nb\r\n", hashlib.sha256(raw).hexdigest(), False)
