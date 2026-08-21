@@ -1,0 +1,86 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'Deploy target (sync.chuanpiao.ltd is the live demo server)'
+        required: false
+        default: 'production'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare deploy package (server code + Caddyfile + compose)
+        run: |
+          mkdir -p pkg
+          cp -r server pkg/
+          cp Caddyfile pkg/
+          cp docker-compose.yml pkg/
+          cp .env.example pkg/
+          find pkg -name __pycache__ -type d -exec rm -rf {} +
+          tar -czf memory-sync-deploy.tar.gz -C pkg .
+
+      - name: Build client zip for the website download
+        run: |
+          mkdir -p dist/memory-sync-client
+          cp -r client/pyproject.toml client/README.md dist/memory-sync-client/
+          cp -r client/memory_sync_client dist/memory-sync-client/
+          cp -r client/tests dist/memory-sync-client/
+          find dist -name __pycache__ -type d -exec rm -rf {} +
+          (cd dist && zip -r ../memory-sync-windows.zip memory-sync-client)
+          sha256sum memory-sync-windows.zip | awk '{print $1 "  memory-sync-windows.zip"}' > checksums.txt
+
+      - name: Write server-side deploy script
+        run: |
+          cat > deploy-on-server.sh <<'EOF'
+          #!/bin/sh
+          set -e
+          cd /opt/memory-sync
+          ts=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "[deploy] backup -> memory-sync-2g.bak-$ts"
+          cp -a memory-sync-2g memory-sync-2g.bak-$ts
+          rm -rf deploy-tmp && mkdir deploy-tmp
+          tar -xzf /tmp/memory-sync-deploy.tar.gz -C deploy-tmp
+          echo '[deploy] overlay server code (preserves .env / compose.override.yaml / site)'
+          cp -a deploy-tmp/server/* memory-sync-2g/
+          cp deploy-tmp/Caddyfile memory-sync-2g/Caddyfile
+          cp deploy-tmp/docker-compose.yml memory-sync-2g/docker-compose.yml
+          echo '[deploy] update website client zip + checksums'
+          cp /tmp/memory-sync-windows.zip memory-sync-2g/site/downloads/memory-sync-windows.zip
+          cp /tmp/checksums.txt memory-sync-2g/site/downloads/checksums.txt
+          echo '[deploy] rebuild + restart api'
+          cd memory-sync-2g
+          docker compose build api
+          docker compose up -d api
+          sleep 12
+          curl -fsS https://sync.chuanpiao.ltd/readyz
+          echo
+          echo '[deploy] DEPLOY_OK'
+          EOF
+          chmod +x deploy-on-server.sh
+
+      - name: Deploy via SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          port: 22
+          source: 'memory-sync-deploy.tar.gz,memory-sync-windows.zip,checksums.txt,deploy-on-server.sh'
+          target: /tmp/
+
+      - name: Run deploy script
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          port: 22
+          script: sh /tmp/deploy-on-server.sh

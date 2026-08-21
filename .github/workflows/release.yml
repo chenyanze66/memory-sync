@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify client package imports
+        run: pip install -e ./client && memory-sync --help >/dev/null
+
+      - name: Build client source zip (website download)
+        run: |
+          mkdir -p dist/memory-sync-client
+          cp -r client/pyproject.toml client/README.md dist/memory-sync-client/
+          cp -r client/memory_sync_client dist/memory-sync-client/
+          cp -r client/tests dist/memory-sync-client/
+          find dist -name __pycache__ -type d -exec rm -rf {} +
+          (cd dist && zip -r ../memory-sync-windows.zip memory-sync-client)
+          sha256sum memory-sync-windows.zip | awk '{print $1 "  memory-sync-windows.zip"}' > checksums.txt
+          echo "zip sha256: $(cut -d' ' -f1 checksums.txt)"
+
+      - name: Build server image (build check)
+        run: docker build -t memory-sync-api:check ./server/api
+
+      - name: Create/update GitHub Release with assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --generate-notes \
+            memory-sync-windows.zip checksums.txt \
+            --title "memory-sync ${GITHUB_REF_NAME}" || \
+          gh release upload "${GITHUB_REF_NAME}" memory-sync-windows.zip checksums.txt --clobber
