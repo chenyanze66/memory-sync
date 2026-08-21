@@ -99,7 +99,7 @@ async def refresh(payload: RefreshRequest, _: None = Depends(auth_rate_limit)):
             JOIN auth_accounts a ON a.id=t.user_id
             WHERE t.token_hash=%s AND t.revoked_at IS NULL AND t.expires_at>now()
               AND a.disabled_at IS NULL
-            FOR UPDATE
+            FOR UPDATE OF t
             """,
             (token_hash,),
         )
